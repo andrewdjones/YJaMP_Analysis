@@ -581,8 +581,7 @@ def transPCVecs(twindow,relTo='Do'):
                 break
         '''
         Originally: window size whatever avg window closest to perp 8.1
-        Now: window size 2 times whatever that was/is
-        Increase window size even more and look for improvement?
+        Now: same, except bump up windows < 16 secs
         '''
         while bestSize < 16000:
             bestSize = bestSize*2
@@ -634,17 +633,20 @@ def transPCVecs(twindow,relTo='Do'):
 def chordFinder(wsize,relTo='La'):
     """
     We also have a lot of things that look like chords + single scale step
-    Need to gather chords based on closeness of note onsets?
-    Go track by track, running jazzKeyFinder and midiTimeWindows with very small size
-    (non-overlapping, 50ms?)
-    Output a csv(?) of all the slices
+    Need to gather chords based on closeness of note onsets
+    Go track by track, running jazzKeyFinder and midiTimeWindows with very small size panes (50ms, non-overlapping) and large windows
+    For now, output a csv of all the slices and all the keys with timestamps
     """
     #Make a keyDict
     #csvName ='iwpcVecs_lcltrans_wind.csv'
     fileName = Template('sdcVecs $tw 2xwind.csv')
-    csvName =fileName.substitute(tw = str(wsize)+relTo)
+    fileName2 = Template('$tw 2xwind keys.csv')
+    csvName = fileName.substitute(tw = str(wsize)+relTo)
+    csvName2 = fileName2.substitute(tw = str(wsize)+relTo)
     file = open(csvName, 'wb')
     lw = csv.writer(file)
+    file2 = open(csvName2, 'wb')
+    lw2 = csv.writer(file2)
     for m, testFile in enumerate(listing):
         #if m > 1:
             #break
@@ -669,7 +671,7 @@ def chordFinder(wsize,relTo='La'):
                 break
         '''
         Originally: window size whatever avg window closest to perp 8.1
-        Now: window size 2 times whatever that was/is
+        Now: window size 2 times whatever that was/is, and it has to start bigger than 16s
         Increase window size even more and look for improvement?
         '''
         while bestSize < 16000:
@@ -677,6 +679,9 @@ def chordFinder(wsize,relTo='La'):
         print "Best window size for",testFile,"is",2*bestSize,"with paneSize",paneSize
         #send window and pane size through local key finder
         keyDict = jazzKeyFinder(testFile, 2*bestSize, paneSize)
+        #output csv of timestamped keys
+        for tms, ky in keyDict.iteritems():
+            lw2.writerow([tms,ky])
         #use resulting ms-indexed keys to transpose tracks
         #for window size, choose super small chord-capturing size (50ms)
         unTrans = midiTimeWindows(wsize, wsize, solos=testFile)
@@ -792,8 +797,9 @@ def nAfterSDS(sds,numWin):
 
 #nAfterSDS([0,4,5,9],100)
 #tallySDSets(3)             
-'''
 chordFinder(50, relTo='Do')
+tallySDSets(5)
+'''
 transPCVecs(800, relTo='La')
 transPCVecs(1200, relTo='La')
 transPCVecs(1200, relTo='Do')
