@@ -9,11 +9,21 @@ import operator
 import scipy.stats
 import collections
 import math
+from numpy import log, log10
 
 #path for the edited jazz midi files
 #path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIsandbox/'
 #path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/MIDIQuantized/'
 #listing = os.listdir(path)
+
+def getProbsFromFreqs(DictionaryOfTallies):
+    totalSum = 0.0
+    dictOfProbs = {}
+    for key, freq in DictionaryOfTallies.iteritems():
+        totalSum += float(freq)
+    for key, freq in DictionaryOfTallies.iteritems():
+        dictOfProbs[key] = float(freq)/totalSum
+    return dictOfProbs
     
 def chordSlicesWithKey():
     """
@@ -57,7 +67,7 @@ def chordSlicesWithKey():
                 chordCount = chordCountMinor
                 totalChords = totalChordsMinor
             else:
-                print 'WHAT FUCKING MODE??', theKey, address
+                print 'WHAT MODE??', theKey, address
                 continue
             startToken = ['start']
             theSlices.append(startToken)
@@ -635,18 +645,22 @@ def chordFinder(wsize,relTo='La'):
     We also have a lot of things that look like chords + single scale step
     Need to gather chords based on closeness of note onsets
     Go track by track, running jazzKeyFinder and midiTimeWindows with very small size panes (50ms, non-overlapping) and large windows
-    For now, output a csv of all the slices and all the keys with timestamps
+    For now, output three csvs:
+         1. csv of all the scale degree set slices (sdcvecs)
+         2. csv of all the 50ms timestamped keys (keys)
+         3. csv of locally-transposed midi voicings, st 0<bass<12 (So: voiced scale degrees)
     """
     #Make a keyDict
     #csvName ='iwpcVecs_lcltrans_wind.csv'
     fileName = Template('sdcVecs $tw 2xwind.csv')
     fileName2 = Template('$tw 2xwind keys.csv')
+    fileName3 = Template('$tw 2xwind transMIDI.csv')
     csvName = fileName.substitute(tw = str(wsize)+relTo)
     csvName2 = fileName2.substitute(tw = str(wsize)+relTo)
-    file = open(csvName, 'wb')
-    lw = csv.writer(file)
-    file2 = open(csvName2, 'wb')
-    lw2 = csv.writer(file2)
+    csvName3 = fileName3.substitute(tw = str(wsize)+relTo)
+    lw = csv.writer(open(csvName,'wb'))
+    lw2 = csv.writer(open(csvName2,'wb'))
+    lw3 = csv.writer(open(csvName3,'wb'))
     for m, testFile in enumerate(listing):
         #if m > 1:
             #break
@@ -680,7 +694,8 @@ def chordFinder(wsize,relTo='La'):
         #send window and pane size through local key finder
         keyDict = jazzKeyFinder(testFile, 2*bestSize, paneSize)
         #output csv of timestamped keys
-        for tms, ky in keyDict.iteritems():
+        sorted_keyDict = sorted(keyDict.iteritems(),key=operator.itemgetter(0))
+        for tms, ky in sorted_keyDict:
             lw2.writerow([tms,ky])
         #use resulting ms-indexed keys to transpose tracks
         #for window size, choose super small chord-capturing size (50ms)
@@ -701,6 +716,7 @@ def chordFinder(wsize,relTo='La'):
             if sum(pccol.values()) == 0:#skip the empty windows
                 continue
             pcVector = []
+            transMIDIvec = []
             #print pccol
             for j in range(12):
                 pcVector.append(0.0)
@@ -709,21 +725,38 @@ def chordFinder(wsize,relTo='La'):
                     lclKey -= 12
                 for mid, counts in pccol.iteritems():
                     pcVector[(mid - lclKey)%12] += counts
+                    if mid - lclKey < 0:
+                        transMIDIvec.append(mid - lclKey + 12)
+                    else:
+                        transMIDIvec.append(mid - lclKey)
             if relTo=='La':#trans minor rel to la and major rel to do
                 if lclKey <= 11:#major key cases
                     for mid, counts in pccol.iteritems():
                         pcVector[(mid  - lclKey)%12] += counts
+                    if mid - lclKey < 0:
+                        transMIDIvec.append(mid - lclKey + 12)
+                    else:
+                        transMIDIvec.append(mid - lclKey)
                 elif lclKey > 11:#minor key cases
                     lclKey -= 12
                     for mid, counts in pccol.iteritems():
                         #here: the -3 is for trans rel to la, not do
                         pcVector[(mid  - lclKey - 3)%12] += counts
+                        if mid - lclKey -3 < 0:
+                            transMIDIvec.append(mid - lclKey -3 + 12)
+                        else:
+                            transMIDIvec.append(mid - lclKey -3)
+            sorted_MV = sorted(transMIDIvec)
+            while sorted_MV[0] > 11:
+                for m in range(len(sorted_MV)):
+                    sorted_MV[m] -= 12
             lw.writerow(pcVector)
+            lw3.writerow(sorted_MV)
             
-def tallySDSets(cmin):
+def tallySDSets(cmin,probs=False):
     """
     Takes output of chordFinder (csv of locally-transposed, 50ms SDvecs)
-    Tallies up all the SD sets
+    Tallies up all the SD sets.  IF probs=False, gives tallies; if True, gives probs
     Outputs a csv of them
     """
     allPanes = csv.reader(open('sdcVecs 50Do 2xwind.csv','rb'))
@@ -738,16 +771,29 @@ def tallySDSets(cmin):
                 SDs.add(n)
         if len(SDs) >= cmin:
             SDSets[str(sorted(SDs))] += 1
-    sorted_SDSets = sorted(SDSets.iteritems(), key=operator.itemgetter(1),reverse=True)
-    fp = Template('50ms $cm SDSets.csv')
+    if probs==True:
+        SDSets_probs = getProbsFromFreqs(SDSets)
+        sorted_SDSets = sorted(getProbsFromFreqs(SDSets).iteritems(),key=operator.itemgetter(1),reverse=True)
+        fp = Template('50ms $cm SDSets Probs.csv')
+    else:
+        sorted_SDSets = sorted(SDSets.iteritems(), key=operator.itemgetter(1),reverse=True)
+        fp = Template('50ms $cm SDSets.csv')
+    '''
     csvName = fp.substitute(cm=cmin)
     x = csv.writer(open(csvName, 'wb'))
     for pair in sorted_SDSets:
         x.writerow([pair[0], pair[1]])
+    '''
+    return SDSets_probs
         
-def nAfterSDS(sds,numWin):
+def nAfterSDS(sds,numWin,supersets=False,probs='None'):
     """
     Takes a given scale degree set and tallies up what happens with next numWin windows
+    By default, doesn't count scale degree supersets, but it will consider all SDSS as equivalent 
+    if you set supersets=True
+    Also compares to unigram probs if probs='Rel'
+    Just absolute, distance-based probs if probs='Abs'
+    Tallies only if probs='None'
     """
     allPanes = csv.reader(open('sdcVecs 50Do 2xwind.csv','rb'))
     allMidiList = []
@@ -759,7 +805,7 @@ def nAfterSDS(sds,numWin):
         for n in range(12):
             if midvec[n] != '0.0':
                 SDset.add(n)
-        if sorted(SDset) == sds:
+        if sorted(SDset) == sds or (supersets == True and SDset.issuperset(sds) == True):
             j = i
             while j < i + numWin:
                 nextSet = set([])
@@ -770,12 +816,26 @@ def nAfterSDS(sds,numWin):
                     j += 1
                     continue
                 try:
-                    SDSetsT[str(sorted(nextSet))][j-i] += 1
+                    SDSetsT[j-i][str(sorted(nextSet))] += 1
                 except TypeError:
-                    SDSetsT[str(sorted(nextSet))] = collections.Counter()
-                    SDSetsT[str(sorted(nextSet))][j-i] += 1
+                    SDSetsT[j-i] = collections.Counter()
+                    SDSetsT[j-i][str(sorted(nextSet))] += 1
                 j += 1
-    #print SDSetsT
+    print SDSetsT
+    #for each dist, turn absolute tallies into relative probs
+    if probs=='Rel':
+        uni_probs = tallySDSets(1,probs=True)
+        for row in SDSetsT:#note that these are now distances
+            #here's the probs for each sds at given distance
+            probs_at_dist = getProbsFromFreqs(SDSetsT[row])
+            #now normalize them by the sds unigram probs
+            for sd in probs_at_dist:
+                logprob = log(probs_at_dist[sd])-log(uni_probs[sd])
+                SDSetsT[row][sd] = logprob
+    elif probs=='Abs':
+        for row in SDSetsT:
+            probs_at_dist = getProbsFromFreqs(SDSetsT[row])
+            SDSetsT[row] = probs_at_dist
     #now try to stick the counter-of-counters, SDSetsT, in a csv
     cols = set()
     for row in SDSetsT:
@@ -786,7 +846,12 @@ def nAfterSDS(sds,numWin):
     for row in SDSetsT:
         SDSetsT[row]['nth slice...'] = row
     #write the CSV
-    fileName = Template('$voic SDs prog 50ms.csv')
+    if probs=='None':
+        fileName = Template('$voic SDs prog 50ms.csv') if supersets == False else Template('$voic SDSS prog 50ms.csv')
+    elif probs=='Rel':
+        fileName = Template('$voic SDs prog rlogprobs 50ms.csv') if supersets == False else Template('$voic SDSS prog logprobs 50ms.csv')
+    elif probs=='Abs':
+        fileName = Template('$voic SDs prog probs 50ms.csv') if supersets == False else Template('$voic SDSS prog logprobs 50ms.csv')
     csvName = fileName.substitute(voic = str(sds))
     file = open(csvName, 'wb')
     lw = csv.writer(file)
@@ -794,11 +859,87 @@ def nAfterSDS(sds,numWin):
     dw = csv.DictWriter(file, fieldnames)
     for row in SDSetsT:
         dw.writerow(SDSetsT[row])
+        
+def sdsSupersetVoicings(sds):
+    """
+    For a given scale degree set SDS, locate all relevant SD supersets
+    Iterate through transMIDI voiced scale degree set data (0<bass<12, upper scale degree voicings)
+    """
+    allPanes = csv.reader(open('50Do 2xwind transMIDI.csv','rb'))
+    allMidiList = []
+    for row in allPanes:
+        allMidiList.append(row)
+    SDSetsT = collections.Counter()
+    for transmid in allMidiList:
+        SDset = set([])
+        for n in range(len(transmid)):
+            SDset.add(int(transmid[n])%12)
+        if SDset.issuperset(sds) == True:
+            SDSetsT[str(transmid)] += 1
+    #write the CSV
+    fileName = Template('$voic voiced SDSS 50ms.csv')
+    csvName = fileName.substitute(voic = str(sds))
+    lw = csv.writer(open(csvName, 'wb'))
+    sorted_SDSets = sorted(SDSetsT.iteritems(), key=operator.itemgetter(1),reverse=True)
+    for pair in sorted_SDSets:
+        lw.writerow([pair[0], pair[1]])
 
-#nAfterSDS([0,4,5,9],100)
-#tallySDSets(3)             
-chordFinder(50, relTo='Do')
-tallySDSets(5)
+def voicingAsSDS(voicing):
+    """
+    answers question: for a given (untransposed) voicing, what are its most common SDSS deployments?
+    this can be done from the locally-transposed MIDI data (NOT the pc or sds data)
+    """
+    allPanes = csv.reader(open('50Do 2xwind transMIDI.csv','rb'))
+    allMidiList = []
+    for row in allPanes:
+        allMidiList.append(row)
+    SDSetsT = collections.Counter()
+    for sliceMidi in allMidiList:
+        #print sliceMidi
+        SDset = set([])
+        for n in sliceMidi:
+            SDset.add(int(n))
+        #print SDset
+        for n in sliceMidi:
+            #Build the voicing on each pitch of the slice midi to check for a match
+            testVoicing = set([int(n) + p for p in voicing])
+            #print testVoicing
+            if SDset.issuperset(testVoicing):
+                SDSetsT[str(sliceMidi)] += 1
+                break
+    #write the CSV
+    fileName = Template('$voic as SDsets 50ms.csv')
+    csvName = fileName.substitute(voic = str(voicing))
+    lw = csv.writer(open(csvName, 'wb'))
+    sorted_SDSets = sorted(SDSetsT.iteritems(), key=operator.itemgetter(1),reverse=True)
+    for pair in sorted_SDSets:
+        lw.writerow([pair[0], pair[1]])
+        
+def csvTransposer(f,d):
+    infile = open(f)
+    reader = csv.reader(infile)
+    cols = []
+    for row in reader:
+        cols.append(row)
+    outfile = open(d,'wb')
+    writer = csv.writer(outfile)
+    for i in range(len(max(cols, key=len))):
+        writer.writerow([(c[i] if i<len(c) else '') for c in cols]) 
+
+'''
+TODO: write new "threader," which starts from a voicing or sds (probably the latter)
+yields: B: most prob after A, C: most prob after B, D: etc.  Cycles, Path-like.  Non-self prog.
+Q: at what temporal dist do we look for "next" thing?  PCA on rel log probs is almost certainly too noisy.
+Can I do PCA on non-rel probs?  Should be less noisy, for sure.
+Are we interested in distance-based swings in rlogprob?  Especially from -/+? Smoking gun for syntactic regime change.
+'''
+#csvTransposer('[0, 2, 7] SDs prog probs 50ms.csv', '[0, 2, 7] SDs prog probs 50ms TRANS.csv')   
+#sdsSupersetVoicings([0,2,7])
+#nAfterSDS([0,2,7],50,supersets=False,probs='Abs')
+#tallySDSets(1,probs=True)             
+#chordFinder(50, relTo='Do')
+#tallySDSets(5)
+#voicingAsSDS([0,5,10])
 '''
 transPCVecs(800, relTo='La')
 transPCVecs(1200, relTo='La')
