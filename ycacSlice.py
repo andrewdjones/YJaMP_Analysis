@@ -242,6 +242,8 @@ def PCAforYCAC(oc,n):
     #display the plot
     plt.show()
     
+def PCAforYJaMP(oc,n):
+    
 
 # ycacVoicings()       
 PCAforYCAC('A_(EA)')
