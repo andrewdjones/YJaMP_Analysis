@@ -1,10 +1,14 @@
-from music21 import *
-from sets import *
+from __future__ import absolute_import
+from __future__ import print_function
+#from music21 import *
+#from sets import *
 import csv
-import pickle
-import os
-from music21.pitch import AccidentalException
-import operator
+import six
+from six.moves import range
+#import pickle
+#import os
+#from music21.pitch import AccidentalException
+#import operator
 
 #First, tell python to look in the directory for all the piano roll midi files
 path = 'C:/Python27/Lib/site-packages/music21/corpus/YCAC_all/'
@@ -19,7 +23,7 @@ def ycacVoicings():
     problems = 0
     for f in listing:
         fileName = path + f
-        print 'Running ', fileName
+        print('Running ', fileName)
         #Load the pickled slices that have not been bass-normalized into types
         openCSV = open(fileName,'r')
         allSlices = csv.reader(openCSV)
@@ -56,8 +60,8 @@ def ycacVoicings():
             except KeyError:
                 sliceCount[str(slicey_type)] = 1
     #tally up the frequencies for each chord
-    sorted_chordCount = sorted(sliceCount.iteritems(), key=operator.itemgetter(1), reverse=True)
-    print 'All the slices!',sorted_chordCount
+    sorted_chordCount = sorted(six.iteritems(sliceCount), key=operator.itemgetter(1), reverse=True)
+    print('All the slices!',sorted_chordCount)
     #export the tally as a csv file
     csvName = 'ycacVoicings.csv'
     x = csv.writer(open(csvName, 'wb'))
@@ -194,9 +198,50 @@ def whatsNAfter(voicing,dist):
     dw = csv.DictWriter(file, fieldnames)
     for row in sliceCount:
         dw.writerow(sliceCount[row])
-    print 'slice count',sliceCount
-    print 'problem chords', problems
-        
-        
+    print('slice count',sliceCount)
+    print('problem chords', problems)
+      
+#Have: "succession" data for trans pcsets with sd in bass for 50 consecutive slices (as csvs)
+#Want: to turn (project?) a collection of those 50-dim distribution vectors into a lower-dim basis of temporal regimes
+#Use: scikit PCA, which takes a numpy array and fits PCA on it.  Can provide num components to fit to... should I?
+def PCAforYCAC(oc,n):
+    """
+    oc is an origin chord successions csv file (tallied by IQ from YCAC) with normalized probs out to 50 slices
+    relies on scikit-learn
+    outputs n basis components (and successions rotated into new basis coords?)
+    """
+    import numpy
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    originpath = 'C:/Users/Andrew/Documents/IQ Regime Paper/successions/'+oc+'.csv'
+    #Load the succession data for oc from csv
+    allDists = csv.reader(open(originpath,'r'))
+    listOfRows = []
+    for row in allDists:
+        listOfRows.append(row)
+    #get the list of slice distances for which there's data (probably 50)
+    slicedist = [int(x) for x in listOfRows[0][1:]]
+    #print(slicedist)
+    #turn the csv strings into floats to get slicedist-dim probability distributions
+    distprobs = []
+    for i in range(1,len(listOfRows)-1):
+        distprobs.append([float(x) for x in listOfRows[i][1:]])
+    #print(distprobs[1])
+    #convert into numpy array for PCA
+    probarr = numpy.array(distprobs)
+    #run PCA; don't forget to set n_components
+    pca = PCA(n_components = n)
+    pca.fit(probarr)
+    #print(pca.components_)
+    #plot however many components you want to see
+    for y in range(n):
+        plt.plot(slicedist, pca.components_[y])#all the distributions
+    #plt.axis([0,50,-1,1])#set axis dimensions
+    #print what percentage of the variance is explained by each of the n components
+    print((pca.explained_variance_ratio_))
+    #display the plot
+    plt.show()
+    
+
 # ycacVoicings()       
-whatsNAfter([0,4,10],50)
+PCAforYCAC('A_(EA)')
