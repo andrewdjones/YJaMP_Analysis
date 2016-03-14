@@ -6,7 +6,7 @@ import csv
 import six
 from six.moves import range
 #import pickle
-#import os
+import os
 #from music21.pitch import AccidentalException
 #import operator
 
@@ -232,7 +232,7 @@ def PCAforYCAC(oc,n):
     #run PCA; don't forget to set n_components
     pca = PCA(n_components = n)
     pca.fit(probarr)
-    #print(pca.components_)
+    print(pca.components_)
     #plot however many components you want to see
     for y in range(n):
         plt.plot(slicedist, pca.components_[y])#all the distributions
@@ -242,8 +242,97 @@ def PCAforYCAC(oc,n):
     #display the plot
     plt.show()
     
-def PCAforYJaMP(oc,n):
-    
+def PCAforYJaMP(oc,n,mode='Rel'):
+    import numpy
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    if mode=='Rel':
+        originpath = 'C:/Users/Andrew/workspace/DissWork/'+oc+' SDs prog rlogprobs 50msTRANS.csv'
+    elif mode=='Abs':
+        originpath = 'C:/Users/Andrew/workspace/DissWork/'+oc+' SDs prog probs 50msTRANS.csv'
+    #Load the succession data for oc from csv
+    allDists = csv.reader(open(originpath,'r',newline='\n'))
+    listOfRows = []
+    for row in allDists:
+        listOfRows.append(row)
+    #get the list of slice distances for which there's data (probably 50)
+    slicedist = [int(x) for x in listOfRows[0][1:]]
+    #print(slicedist)
+    #turn the csv strings into floats to get slicedist-dim probability distributions
+    for row in listOfRows:
+        for j in range(len(row)):
+            if row[j]=='':
+                row[j]=0
+    #print(listOfRows[1])
+    distprobs = []
+    for i in range(1,len(listOfRows)):
+        distprobs.append([float(x) for x in listOfRows[i][1:]])
+    #print(distprobs[1])
+    #convert into numpy array for PCA
+    probarr = numpy.array(distprobs)
+    #run PCA; don't forget to set n_components
+    pca = PCA(n_components = n)
+    pca.fit(probarr)
+    '''This sends out the transformed data '''
+    transformed_data = pca.fit(probarr).transform(probarr)
+    print(transformed_data)
+     #write the CSV
+    csvName = oc+' Abs transformed data.csv'
+    file = open(csvName, 'w',newline='\n')
+    lw = csv.writer(file)
+    for row in transformed_data:
+        lw.writerow(row)
+    print(len(probarr),len(transformed_data))
+    #print(pca.components_)
+    #plot however many components you want to see
+    plt.subplot(121)
+    for y in range(n):
+        plt.plot(slicedist, pca.components_[y],label='PCA '+str(y+1)+', '+str(pca.explained_variance_ratio_[y]))#all the distributions
+    plt.legend(loc="upper left",bbox_to_anchor=(1.05, 1.))
+    plt.title(str(oc)+' PCA')
+    plt.xlabel('50ms time windows')
+    plt.ylabel('Unigram-relative log probability')
+    #plt.axis([0,50,-1,1])#set axis dimensions
+    #print what percentage of the variance is explained by each of the n components
+    print((pca.explained_variance_ratio_))
+    #display the plot
+    plt.show()
 
+def PCAexample():
+    '''
+    A bad example for putting in a "simple" discussion in chapter 4
+    '''
+    import numpy
+    from sklearn.decomposition import PCA
+    import matplotlib.pyplot as plt
+    someChords = []
+    for i in range(5):
+        someChords.append([2*i,3*i+2,i+5,i+9])
+    print(someChords)
+    #convert into numpy array for PCA
+    probarr = numpy.array(someChords)
+    #run PCA; don't forget to set n_components
+    pca = PCA(n_components = 3)
+    pca.fit(probarr)
+    print(pca.components_)
+    transformed_data = pca.fit(probarr).transform(probarr)
+    print(transformed_data)
+    plt.subplot(121)
+    for y in range(3):
+        plt.plot([0,1,2,3], pca.components_[y],label='PCA '+str(y+1)+', '+str(pca.explained_variance_ratio_[y]))#all the distributions
+    for y in range(5):
+        plt.plot([0,1,2,3],someChords[y])
+    plt.legend(loc="upper left",bbox_to_anchor=(1.05, 1.))
+    plt.title(' PCA')
+    plt.xlabel('Sequential chord step')
+    plt.ylabel('Pitch')
+    #plt.axis([0,50,-1,1])#set axis dimensions
+    #print what percentage of the variance is explained by each of the n components
+    print((pca.explained_variance_ratio_))
+    #display the plot
+    plt.show()
+    
 # ycacVoicings()       
-PCAforYCAC('A_(EA)')
+#PCAforYCAC('A_(EA)',5)
+PCAforYJaMP('[2, 4, 7, 11]',5,mode='Abs')
+#PCAexample()
