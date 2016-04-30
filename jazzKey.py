@@ -1221,14 +1221,14 @@ def sdsTracker(sds):
     for row in sol:
         lw.writerow(row)
 
-sdsTracker([0,2,7])
+#sdsTracker([0,2,7])
 #runtopNchords(1836, 100, prb='Abs',backwards=True)#1836 should be ALL of them.  Run these forwards, too, and zip/send to Jeremy
 #syntax_backwards([0,2,5], 100, probs='Rel', filtp=0.0)
 #syntax_backwards(('ii',{'ii': [[0,2,5],[0,2,5,9],[2,5,9]],'V': [[5,7,11],[2,5,7,11],[2,7,11]], 'I': [[0,4,7],[0,3,7],[0,4,11],[0,3,10],[0,4,7,11],[0,3,7,10]]}),100,supersets=False,probs='Rel',filtp=0.0)
 #sdsSupersetVoicings([0,2,7])
 #nAfterSDS(('V',{'ii': [[0,2,5],[0,2,5,9],[2,5,9]],'V': [[5,7,11],[2,5,7,11],[2,7,11]], 'I': [[0,4,7],[0,3,7],[0,4,11],[0,3,10],[0,4,7,11],[0,3,7,10]]}),100,supersets=False,probs='Abs',filtp=0.0)
-#nAfterSDS([2,4,7,11],100,supersets=False,probs='Abs',filtp=0.0)
-#csvTransposer('[2, 4, 7, 11] SDs prog probs 50ms.csv', '[2, 4, 7, 11] SDs prog probs 50msTRANS.csv')   
+nAfterSDS([0,4,5,9],100,supersets=False,probs='Abs',filtp=0.0)
+csvTransposer('[0, 4, 5, 9] SDs prog probs 50ms.csv', '[0, 4, 5, 9] SDs prog probs 50msTRANS.csv')   
 #tallySDSets(1,probs=True)             
 #chordFinder(50, relTo='Do',withTimeStamps=True)
 #tallySDSets(3,probs=True)

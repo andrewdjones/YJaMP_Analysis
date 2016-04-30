@@ -277,7 +277,7 @@ def PCAforYJaMP(oc,n,mode='Rel'):
     transformed_data = pca.fit(probarr).transform(probarr)
     print(transformed_data)
      #write the CSV
-    csvName = oc+' Abs transformed data.csv'
+    csvName = oc+' Rel transformed data.csv'
     file = open(csvName, 'w',newline='\n')
     lw = csv.writer(file)
     for row in transformed_data:
@@ -332,7 +332,16 @@ def PCAexample():
     #display the plot
     plt.show()
     
+"""
+Scale up PCA:
+Take each top-100 scale degree set
+Run PCA on its TPDs
+Score (positive) PCA1 and (opposite-signed) PCA2
+Track the top PCA2-scored chords
+Weighted graph similarity/clustering?
+"""
+    
 # ycacVoicings()       
 #PCAforYCAC('A_(EA)',5)
-PCAforYJaMP('[2, 4, 7, 11]',5,mode='Abs')
+PCAforYJaMP('V',5,mode='Rel')
 #PCAexample()
