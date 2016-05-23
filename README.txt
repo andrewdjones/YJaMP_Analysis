@@ -16,7 +16,7 @@ catTPD.py: PCA-based agglomerative clustering and dendrogram models.  Bootstraps
 
 --------------
 
-Other .py files here provide more exploratory (and less curated) code for YJaMP (and should be approached with caution).
+Other .py files here provide more exploratory (and less curated) code for YJaMP (and should be approached with caution).  They're in the folder "Exploratory Code."
 
 chordSmusher.py: contains code to make chords out of messy midi data in alternate ways.
 
