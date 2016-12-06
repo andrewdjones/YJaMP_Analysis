@@ -9,28 +9,24 @@ import numpy as np
 import random
 from scipy.spatial import distance
 from scipy.spatial.distance import pdist, cdist, squareform
+from jazzKey import getProbsFromFreqs, csvTransposer
+import matplotlib.pyplot as plt
+import re
+"""In this file: 
+I. K-medoids clustering for MIDI data + cleaning
+II. agglomerative clustering/plotting + k-nearest neighbors classifier"""
 
-def getProbsFromFreqs(DictionaryOfTallies):
-    #Simple script to turn a dict of tallies into a dict of normalized probabilities
-    totalSum = 0.0
-    dictOfProbs = {}
-    for key, freq in six.iteritems(DictionaryOfTallies):
-        totalSum += float(freq)
-    for key, freq in six.iteritems(DictionaryOfTallies):
-        dictOfProbs[key] = float(freq)/totalSum
-    return dictOfProbs
 
-def csvTransposer(f,d):
-    #Basic: does what it says, and leaves csv f alone after creating T(f) = d
-    infile = open(f)
-    reader = csv.reader(infile)
-    cols = []
-    for row in reader:
-        cols.append(row)
-    outfile = open(d,'w',newline='\n')
-    writer = csv.writer(outfile)
-    for i in range(len(max(cols, key=len))):
-        writer.writerow([(c[i] if i<len(c) else '') for c in cols]) 
+"""
+I. K-medoids clustering
+
+ported from machine_learning github (kmedoids.py)
+with self-authored functions for MIDI corpus:
+-entropy-based
+-bigram transition-based
+-Temporal Probability Matrix-based
+-meta and subclustering
+"""
 
 def cluster(distances, k=3):
     '''
@@ -284,6 +280,115 @@ def rareSDSFixer(fld):
         lw = csv.writer(file)
         for row in expandedList:
             lw.writerow(row)
+
+def getOrderedTPDdata(address, chordRows, reduc='none', rowtype='t',showComp=False):
+    '''
+    For a TPD csv 'address' (rows,cols)=(time windows, destination chords)
+    and ordered list of destination chords to track 'chordRows'
+    Pulls the TPD data out of address, keeps only the relevant destination chords, and puts them in chordRows order
+    if reduc=='PCA', runs PCA on the resulting matrix to reduce number of time windows to three oriented PCA components
+    Returns the reduced and reordered matrix as a numpy array
+    '''
+    
+    import numpy as np
+    from sklearn.decomposition import PCA
+    
+    #get the data for the origin chord's destinations over time
+    allDists = csv.reader(open(address,'r',newline='\n'))
+    lstOfRows = []
+    #each row is a time window
+    for row in allDists:
+        lstOfRows.append(row)#should be 100 of these
+    #but if the address passed is (rows, cols) = (dcs, t), transpose it
+    if rowtype == 'c':
+        lstOfRows = np.transpose(np.array(lstOfRows))#now: t by dcs
+        
+    #now build the destination chord matrix in its proper order
+    dcMat = []#the correctly-ordered destination chord matrix
+    orderedCols = [0]#indices of the data rows necessary to get them in topN order    
+    for sds in chordRows:#the previously-assembled list of topN probable chords
+        matches = 0
+        for j,dc in enumerate(lstOfRows[0]):#pull out which columns match in order
+            if j==0:#skip header row
+                continue
+            if dc == sds:
+                orderedCols.append(j)#row index
+                matches += 1
+                break
+        if matches == 0:
+            orderedCols.append(sds)#if no match in dcs, append the missing chord name
+    for j,row in enumerate(lstOfRows):
+        goodRow = []
+        if j==0:#treat header row differently
+            for m in orderedCols:
+                if type(m) == str:#for cols missing
+                    goodRow.append(m)
+                    continue
+                goodRow.append(row[m])#for extant cols
+        else:#non-header rows
+            for m in orderedCols:#now fill each row in order
+                if type(m) == str:
+                    goodRow.append('0.0')#zeros for the previously missing cols
+                    continue
+                goodRow.append(row[m])#correct probs for extant cols
+        dcMat.append(goodRow)
+            
+    #turn empty cells into float 0.0
+    for m in range(1,len(dcMat)):
+        for n in range(1,len(dcMat[m])):
+            if dcMat[m][n] == '':
+                dcMat[m][n] = 0.0
+    
+    #run PCA
+    if reduc=='PCA':
+        dcMat_noheads = []#same as dcMat, but without row/col labels
+        for i in range(1,len(dcMat)):
+            dcMat_noheads.append([float(x) for x in dcMat[i][1:]])
+        #convert into numpy array for PCA
+        if rowtype=='t':
+            probarr = np.transpose(np.array(dcMat_noheads))# num dc rows by num time stamps cols, now
+        elif rowtype=='c':
+            probarr = np.array(dcMat_noheads)#t rows by dc columns
+        pca = PCA(n_components = 3)
+        pca.fit(probarr)
+        #this is the PCA-transformed data (topN rows by n_components columns)
+        transformed_data = pca.fit(probarr).transform(probarr)
+        compn = pca.components_
+        
+        if showComp:
+            #This shows a plot of the PCA components (not transformed data)
+            plt.subplot(121)
+            for y in range(3):
+                plt.plot(range(len(dcMat_noheads)), pca.components_[y],label='PCA '+str(y+1)+', '+"{0:.3f}".format(pca.explained_variance_ratio_[y]))#all the distributions
+            plt.legend(loc="upper left",bbox_to_anchor=(1.05, 1.))
+            plt.title(str(re.findall(r'\[([^]]*)\]', address))+' PCA Components')
+            plt.xlabel('50ms Time Windows')
+            plt.ylabel('Component Loading')
+            #print what percentage of the variance is explained by each of the n components
+            print((pca.explained_variance_ratio_))
+            #display the plot
+            plt.show()
+        
+        """#to orient the components for comparison, we need at least 3 of them
+        if len(compn) < 3:
+            continue
+        """
+        #NB!: for many chords, the components are shitty and don't tell us anything good!
+        if compn[0][0] < 0:#set the first component to start positive (usually phonetic data)
+            for dcrow in transformed_data:
+                dcrow[0] = -1*dcrow[0]
+        if compn[1][0] > 0:#set the second component to start negative (usually long-range key data)
+            for dcrow in transformed_data:
+                dcrow[1] = -1*dcrow[1]
+        if compn[2][0] > 0:#set the third component to start negative (usually syntactic[?] data)
+            for dcrow in transformed_data:
+                dcrow[2] = -1*dcrow[2]
+        dcMat = np.transpose(np.array(transformed_data))#now it's (n_components,topN), but NO header rows
+    elif reduc!='PCA':
+        dcMat = np.array(dcMat)
+    
+    #print(dcMat.shape)
+    return dcMat
             
 def TPDmatrixSim(fld,topN,k,meth='naive',reduc='none',sendData=False):
     '''
@@ -328,83 +433,12 @@ def TPDmatrixSim(fld,topN,k,meth='naive',reduc='none',sendData=False):
         
         #get the data for the origin chord's destinations over time
         address = fld + f
-        allDists = csv.reader(open(address,'r',newline='\n'))
-        lstOfRows = []
-        #each row is a time window
-        for row in allDists:
-            lstOfRows.append(row)#should be 100 of these
-            
-        #now build the destination chord matrix in its proper order
-        dcMat = []#the correctly-ordered destionation chord matrix
-        orderedCols = [0]#indices of the data rows necessary to get them in topN order    
-        for sds in allChordsList:#the previously-assembled list of topN probable chords
-            matches = 0
-            for j,dc in enumerate(lstOfRows[0]):#pull out which columns match in order
-                if j==0:#skip header row
-                    continue
-                if dc == sds:
-                    orderedCols.append(j)#row index
-                    matches += 1
-                    break
-            if matches == 0:
-                orderedCols.append(sds)#if no match in dcs, append the missing chord name
-        for j,row in enumerate(lstOfRows):
-            goodRow = []
-            if j==0:#treat header row differently
-                for m in orderedCols:
-                    if type(m) == str:#for cols missing
-                        goodRow.append(m)
-                        continue
-                    goodRow.append(row[m])#for extant cols
-            else:#non-header rows
-                for m in orderedCols:#now fill each row in order
-                    if type(m) == str:
-                        goodRow.append('0.0')#zeros for the previously missing cols
-                        continue
-                    goodRow.append(row[m])#correct probs for extant cols
-            dcMat.append(goodRow)
-            
-        #send out the ordered rows (and be careful setting the filepath)
+        dcMat = getOrderedTPDdata(address, allChordsList, reduc=reduc)
         if sendData:
-            file = open(str(topN)+' AbsP Syntax Forwards/'+f, 'w',newline='\n')
+            file = open('dcMats_PCAord/'+ocName+'.csv', 'w',newline='\n')
             lw = csv.writer(file)
             for row in dcMat:
                 lw.writerow(row)
-                
-        #turn empty cells into float 0.0
-        for m in range(1,len(dcMat)):
-            for n in range(1,len(dcMat[m])):
-                if dcMat[m][n] == '':
-                    dcMat[m][n] = 0.0
-        
-        #run PCA
-        if reduc=='PCA':
-            dcMat_noheads = []#same as dcMat, but without row/col labels
-            for i in range(1,len(dcMat)):
-                dcMat_noheads.append([float(x) for x in dcMat[i][1:]])
-            #convert into numpy array for PCA
-            probarr = np.transpose(np.array(dcMat_noheads))# num dc rows by num time stamps cols, now
-            pca = PCA(n_components = 3)
-            pca.fit(probarr)
-            #this is the PCA-transformed data (topN rows by n_components columns)
-            transformed_data = pca.fit(probarr).transform(probarr)
-            compn = pca.components_
-            """#to orient the components for comparison, we need at least 3 of them
-            if len(compn) < 3:
-                continue
-            """
-            #NB!: for many chords, the components are shitty and don't tell us anything good!
-            if compn[0][0] < 0:#set the first component to start positive (usually phonetic data)
-                for dcrow in transformed_data:
-                    dcrow[0] = -1*dcrow[0]
-            if compn[1][0] > 0:#set the second component to start negative (usually long-range key data)
-                for dcrow in transformed_data:
-                    dcrow[1] = -1*dcrow[1]
-            if compn[2][0] > 0:#set the third component to start negative (usually syntactic[?] data)
-                for dcrow in transformed_data:
-                    dcrow[2] = -1*dcrow[2]
-            #now it's (n_components,topN), which is how the clustering works, but NO header rows
-            dcMat = np.transpose(np.array(transformed_data))
             
         #now get the distance between this origin chord's TPD matrix and all the others so far
         for i,mat in enumerate(matList):
@@ -453,10 +487,11 @@ def TPDmatrixSim(fld,topN,k,meth='naive',reduc='none',sendData=False):
     for row in clus:
         lw.writerow(row) 
         
-def naiveDistance(mat1,mat2,headers='yes'):
+def naiveDistance(mat1,mat2,headers='yes',pcaComp=[]):
     '''
     Returns the summed, absolute, entry-for-entry distance between TPD mat1 and mat2
     if headers=='yes', skips the first row and column
+    if given a list pcaComp = [i1, i2...], calculates dist from only rows i_n between matrices
     '''
     summedAbsDist = 0.0#naive distance entrywise (Manhattan, strictly speaking)
     if len(mat1) != len(mat2) or len(mat1[0]) != len(mat2[0]):
@@ -466,6 +501,9 @@ def naiveDistance(mat1,mat2,headers='yes'):
     elif headers == 'no':
         startRow = 0
     for m in range(startRow,len(mat1)):
+        #only calculate distance based on indices passed in by pcaComp
+        if len(pcaComp) > 0 and m - startRow + 1 not in pcaComp:
+            continue
         for n in range(startRow,len(mat1[m])):
             #assign floats of 0.0 to any empty cells
             if mat1[m][n] == '':
@@ -506,14 +544,6 @@ def avgCosDistance(mat1,mat2,headers='yes'):
         allCosDist += 1 - dot/(np.sqrt(magp)*np.sqrt(magk))
     #average cosine distance
     return allCosDist/len(mat1)
-
-def matrixSimCaller(r,fld,topN,k):
-    '''
-    Just runs TPDmatrixSim r times and outputs list of clusterings
-    convenient for cluster computing
-    '''
-    for j in range(r):
-        TPDmatrixSim(fld,topN,k,meth='naive',reduc='PCA')  
 
 def metaCluster(fld,k):
     '''
@@ -576,6 +606,88 @@ def metaCluster(fld,k):
     lw.writerow(['origin chord','uprob','cluster','medoid','distance'])
     for row in clus:
         lw.writerow(row)
+
+def subCluster(n,clustr,distMat):
+    '''
+    Takes a clustering csv (clustr) and distance matrix (distMat) as inputs
+    For largest two clusters (by probability mass), builds reduced/sliced distMat 
+    Breaks the largest two clusters into n subclusters via k-medoids
+    '''
+    import operator
+    import sklearn
+    from sklearn import metrics
+    
+    #get the unigram probs
+    allChords = csv.reader(open('50ms 3 SDSets.csv','r',newline='\n'))
+    uniProbs = {}
+    for row in allChords:
+        uniProbs[row[0]] = int(row[1])
+    uniProbs = getProbsFromFreqs(uniProbs)
+    
+    #get the distance matrix
+    diMat = []
+    dists = csv.reader(open(distMat, 'r',newline='\n'))
+    for row in dists:
+        diMat.append(row)
+    disArr = np.array(diMat)#pairwise dist mat (gen Manh?) as strings
+    diArr = disArr.astype(float)#now as floats
+    #print(diArr)
+    
+    #get the kludgy lookup list that relates chord labels to distMat rows
+    lkps = {}
+    lkp = csv.reader(open('ndistMat_lookups_rev.csv','r',newline='\n'))
+    for row in lkp:
+        lkps[row[1]] = row[0]
+    
+    #get the medoids and membership from prev clustering
+    meds = {}#dict of medoids: each medoid keys a list of [chord, chord,...]
+    medP = {}#dict of total unigram tallies keyed by medoid
+    clsts = csv.reader(open(clustr, 'r',newline='\n'))
+    i=0
+    for row in clsts:
+        i+=1
+        if i < 3: continue
+        if row[2] not in meds:
+            meds[row[2]] = []
+            medP[row[2]] = 0
+        meds[row[2]].append(row[0])
+        medP[row[2]] += int(row[1])
+    #list of medoids sorted by descending unigram probability captured
+    sorted_medP = sorted(medP.items(), key=operator.itemgetter(1), reverse=True)
+    
+    #take the two biggest clusters and generate a new intra-clus disMat
+    ri = str(random.randint(0,5000))#silly rn for csv bookkeeping
+    sils = []#list silhouettes of the two biggest clusters
+    newclus = []#format: [origin chord, unigram prob, cluster assign, medoid, distance to medoid]
+    for j in range(2):
+        subcl_id = []#this will be a list of row indices for new_distMat
+        subcl = meds[sorted_medP[j][0]]#all the chord names in med
+        for chd in subcl:
+            subcl_id.append(lkps[chd])#the numerical maps for those chords
+        rows = np.array(subcl_id, dtype=np.intp)
+        new_distMat = diArr[np.ix_(rows, rows)]#distance matrix for subcluster
+        
+        #kmedoids on the subcluster
+        clus_and_med = cluster(new_distMat,n)
+        new_meds = [subcl[m] for m in clus_and_med[1]]
+        msil = sklearn.metrics.silhouette_score(new_distMat,clus_and_med[0],metric='precomputed')
+        print(len(clus_and_med[0]),new_distMat.shape,msil)
+        sils.append([ri+'_'+str(j),msil])
+        #print(new_meds)
+        for l,oc in enumerate(subcl):
+            newclus.append([oc,uniProbs[oc],clus_and_med[0][l],subcl[clus_and_med[0][l]],new_distMat[l,clus_and_med[0][l]]])
+    
+    #now dump the new clusterings into a csv
+    csvName = 'subClus/subcluster test'+ri+'.csv'
+    file = open(csvName, 'w',newline='\n')
+    lw = csv.writer(file)
+    lw.writerow(['origin chord','uprob','cluster','medoid','distance'])
+    for row in newclus:
+        lw.writerow(row)
+    file2 = open('subClus/subClus_silh.csv','a',newline='\n')
+    lw2 = csv.writer(file2)
+    for row in sils:
+        lw2.writerow(row)
         
 def getSilhouettes(distmat,fld,k='single'):
     '''
@@ -640,6 +752,13 @@ def getSilhouettes(distmat,fld,k='single'):
         lw.writerow(['clustering','silhouette score','each sample silhouette'])
     for row in silh:
         lw.writerow(row)
+
+"""
+II. Temporal Probability-based agglomerative clustering and classifier
+-agglomclus
+-dendrogram plotting
+-rudimentary k-nearest neighbors classifier; more to come
+"""
 
 def plot_dendrogram(model, **kwargs):
     '''
@@ -727,94 +846,202 @@ def agglomClus(distmat,k,sendData=False):
     plot_dendrogram(clusfit,labels=chdnameslst,show_leaf_counts=True,leaf_font_size=8,leaf_rotation=45)#labels=clusfit.labels_
     plt.show()
         
-def subCluster(n,clustr,distMat):
+def getNaiveDists(oc,fld,topN,rt='t',reduc='none',comps=[]):
     '''
-    Takes a clustering csv (clustr) and distance matrix (distMat) as inputs
-    For largest two clusters (by probability mass), builds reduced/sliced distMat 
-    Breaks the largest two clusters into n subclusters via k-medoids
+    For origin scale degree set oc
+    calculate its naive (or PCA-reduced) distance from topN most unigram probable chords
+    in terms of TPDs taken from directory fld
+    output a ranked list of the closest chords and their Manhattan distances
+    If reduc=='PCA,' calculates Manhattan distances based on components listed in comps
     '''
     import operator
-    import sklearn
-    from sklearn import metrics
+    import numpy as np
+    from sklearn.decomposition import PCA
     
-    #get the unigram probs
+    distList = []#here are all the distances between the oc TPD and the topN TPD matrices
+    
+    #figure out which chords are in the topN most probable for keeping
     allChords = csv.reader(open('50ms 3 SDSets.csv','r',newline='\n'))
-    uniProbs = {}
-    for row in allChords:
-        uniProbs[row[0]] = int(row[1])
-    uniProbs = getProbsFromFreqs(uniProbs)
+    allChordsList = []#the names of the topN origin chords
+    uniProbs = {}#a dict of their unigram probs
+    for i, row in enumerate(allChords):
+        #Make a list of the topN most unigram-probable sds
+        if i > topN - 1:
+            break
+        allChordsList.append(row[0])
+        uniProbs[row[0]] = int(row[1])    
+    #print(allChordsList[0])#Can leave chord names as strings
     
-    #get the distance matrix
-    diMat = []
-    dists = csv.reader(open(distMat, 'r',newline='\n'))
-    for row in dists:
-        diMat.append(row)
-    disArr = np.array(diMat)#pairwise dist mat (gen Manh?) as strings
-    diArr = disArr.astype(float)#now as floats
-    #print(diArr)
+    #get data for this origin chord (oc)
+    if rt=='t':
+        originpath = 'C:/Users/Andrew/workspace/DissWork/'+str(oc)+' SDs prog probs 50ms.csv'
+    elif rt=='c':
+        originpath = 'C:/Users/Andrew/workspace/DissWork/'+str(oc)+' SDs prog probs 50msTRANS.csv'
+    ocTPD = getOrderedTPDdata(originpath, allChordsList, reduc=reduc,rowtype=rt)
     
-    #get the kludgy lookup list that relates chord labels to distMat rows
-    lkps = {}
-    lkp = csv.reader(open('ndistMat_lookups_rev.csv','r',newline='\n'))
-    for row in lkp:
-        lkps[row[1]] = row[0]
-    
-    #get the medoids and membership from prev clustering
-    meds = {}#dict of medoids: each medoid keys a list of [chord, chord,...]
-    medP = {}#dict of total unigram tallies keyed by medoid
-    clsts = csv.reader(open(clustr, 'r',newline='\n'))
-    i=0
-    for row in clsts:
-        i+=1
-        if i < 3: continue
-        if row[2] not in meds:
-            meds[row[2]] = []
-            medP[row[2]] = 0
-        meds[row[2]].append(row[0])
-        medP[row[2]] += int(row[1])
-    #list of medoids sorted by descending unigram probability captured
-    sorted_medP = sorted(medP.items(), key=operator.itemgetter(1), reverse=True)
-    
-    #take the two biggest clusters and generate a new intra-clus disMat
-    ri = str(random.randint(0,5000))#silly rn for csv bookkeeping
-    sils = []#list silhouettes of the two biggest clusters
-    newclus = []#format: [origin chord, unigram prob, cluster assign, medoid, distance to medoid]
-    for j in range(2):
-        subcl_id = []#this will be a list of row indices for new_distMat
-        subcl = meds[sorted_medP[j][0]]#all the chord names in med
-        for chd in subcl:
-            subcl_id.append(lkps[chd])#the numerical maps for those chords
-        rows = np.array(subcl_id, dtype=np.intp)
-        new_distMat = diArr[np.ix_(rows, rows)]#distance matrix for subcluster
+    #now iterate through all DC TPDs in fld
+    listing = os.listdir(fld)
+    flist = []#origin chord labels/names, in order
+    for f in listing:
+        #Toss out those not in allChordsList (i.e, not topN prob)
+        chdStr = f.split('.')[0]#more csv kludging
+        sdsStr = chdStr.split(']')[0] + ']'
+        if sdsStr not in allChordsList:
+            #print('skipping '+f)
+            continue
+        #any f reaching this point is a topN chord
+        ocName = f.split(']')[0]+']'
+        flist.append(ocName)
         
-        #kmedoids on the subcluster
-        clus_and_med = cluster(new_distMat,n)
-        new_meds = [subcl[m] for m in clus_and_med[1]]
-        msil = sklearn.metrics.silhouette_score(new_distMat,clus_and_med[0],metric='precomputed')
-        print(len(clus_and_med[0]),new_distMat.shape,msil)
-        sils.append([ri+'_'+str(j),msil])
-        #print(new_meds)
-        for l,oc in enumerate(subcl):
-            newclus.append([oc,uniProbs[oc],clus_and_med[0][l],subcl[clus_and_med[0][l]],new_distMat[l,clus_and_med[0][l]]])
+        #get the data for the origin chord's destinations over time
+        address = fld + f
+        if rt=='c':
+            csvTransposer(address, 'temp_dcMat_c.csv')
+            address = 'temp_dcMat_c.csv'
+        dcTPD = getOrderedTPDdata(address, allChordsList, reduc=reduc,rowtype=rt)
+            
+        #now get the distance between given oc and this origin chord's TPD array
+        if reduc=='PCA': hdr='no'
+        else: hdr='yes'
+        #get manhattan distance between arrays
+        distList.append([f,naiveDistance(ocTPD, dcTPD,headers=hdr,pcaComp=comps)])
     
-    #now dump the new clusterings into a csv
-    csvName = 'subClus/subcluster test'+ri+'.csv'
-    file = open(csvName, 'w',newline='\n')
+    #now sort and output the distList
+    s_distList = sorted(distList,key=operator.itemgetter(1))
+    if reduc=='PCA':
+        file = open(str(oc)+ ' neighbors ' +str(topN)+ 'PCA.csv', 'w',newline='\n')
+    else:
+        file = open(str(oc)+ ' neighbors ' +str(topN)+ '.csv', 'w',newline='\n')
     lw = csv.writer(file)
-    lw.writerow(['origin chord','uprob','cluster','medoid','distance'])
-    for row in newclus:
+    lw.writerow(['scale degree set','TPD distance'])
+    for row in s_distList:
         lw.writerow(row)
-    file2 = open('subClus/subClus_silh.csv','a',newline='\n')
-    lw2 = csv.writer(file2)
-    for row in sils:
-        lw2.writerow(row)
+        
+def knn_testClass(r_state,**kwargs):
+    '''Trains on top 200 chord flat clustering and attempts to label next n chords
+    
+    1. From flat agglom clus, use sklearn to sep training/testing sets with clus num labels
+    (use PCA-red, ordered TPMs as basis)
+    2. Flatten those matrices and get a sense of what happens for different k (knn)
+    2. Use model to tag next n (outside the top200) chords by clus number
+    '''
+    import numpy as np
+    from sklearn.cross_validation import train_test_split
+    from sklearn.neighbors import KNeighborsClassifier
+    
+    #grab the flat clustering for top200 chords
+    #numChords by numWindows array of sample data
+    samples = []
+    #numChords-length vector of cluster tags
+    tags = []
+    flat_clus_path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/Categories chapter/truncDend_memb.csv'
+    all_labels = csv.reader(open(flat_clus_path,'r',newline='\n'))
+    for i,row in enumerate(all_labels):
+        if i==0: continue #skip header row
+        tags.append(row[0])
+        sf = csv.reader(open('dcMats_PCAord/'+row[1]+'.csv','r',newline='\n'))
+        samp = np.array([r for r in sf])
+        samples.append(samp.flatten())
+    #print(samples[0])
+    
+    #auto-separate training/testing sets from full tagged sample
+    x_tr,x_ts,y_tr,y_ts = train_test_split(samples,tags,test_size=0.3,random_state=r_state)
+    #print(y_tr)
+    
+    #fit knn model, return score
+    clf = KNeighborsClassifier(**kwargs)
+    clf.fit(x_tr,y_tr)
+    #print(x_ts[0],clf.predict_proba(x_ts[0]))
+    #score the trained model on the held-out testing data
+    return(clf.score(x_ts,y_ts))
 
+def knn_scorer(n):
+    '''Calls knn_testClass() to score n random trials with 1 < k < 10
+    Output: seaborn plot of accuracy versus k
+    '''
+    import seaborn as sms    
+    from matplotlib import pyplot as plt
+    plt.subplot(111)
+    
+    j=0
+    while j < n:
+        kvals, scs = [],[]
+        for k in range(1,10):
+            sc = knn_testClass(j,n_neighbors=k,p=1,metric='minkowski')
+            #print([k,sc])
+            kvals.append(k)
+            scs.append(sc)
+        plt.plot(kvals, scs,label='Trial '+str(j))
+        j += 1
+        
+    plt.legend(loc="upper left",bbox_to_anchor=(1.05, 1.))
+    plt.title('Accuracy for k-nearest neighbors')
+    plt.xlabel('k (neighbors compared)')
+    plt.ylabel('Score')
+    #display the plot
+    plt.show()
+    
+def TPD_PCA_lowP(mx):
+    '''Simple script to pull lower-prob scale degree sets for later classification
+    Outputs: temporal probability matrices (TPM) with basis of top200 chords in 3-comp PCA coords
+    '''
+    #figure out which chords are in the topN most probable for keeping
+    allChords = csv.reader(open('50ms 3 SDSets.csv','r',newline='\n'))
+    allChordsList = []#the names of the topN origin chords
+    for i, row in enumerate(allChords):
+        #Make a list of the top200 most unigram-probable sds
+        if i < 200:
+            allChordsList.append(row[0])
+            continue
+        #if the chord is a lowP SDS, get data for the origin chord (oc)
+        originpath = 'C:/Users/Andrew/workspace/DissWork/Abs Syntax Forwards_rev/'+row[0]+' SDs prog probs 50ms.csv'
+        ocTPD = getOrderedTPDdata(originpath, allChordsList, reduc='PCA',rowtype='t')
+        destpath = 'C:/Users/Andrew/workspace/Disswork/dcMats_PCAord_lowP/'+row[0]+'.csv'
+        lw = csv.writer(open(destpath, 'w',newline='\n'))
+        for row in ocTPD:
+            lw.writerow(row)
+        if i > mx - 2:
+            break
+        #print(len(ocTPD),len(ocTPD[0]))
+        
+def knn_predicter(chd,**kwargs):
+    '''Using knn trained on top200 SDS flat clustering tags, predicts cluster for lower-P chd'''
+    import numpy as np
+    from sklearn.cross_validation import train_test_split
+    from sklearn.neighbors import KNeighborsClassifier
+    
+    #grab the flat clustering for top200 chords; this is the training set for the model
+    #numChords by numWindows array of sample data
+    samples = []
+    #numChords-length vector of cluster tags
+    tags = []
+    flat_clus_path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/Categories chapter/truncDend_memb.csv'
+    all_labels = csv.reader(open(flat_clus_path,'r',newline='\n'))
+    for i,row in enumerate(all_labels):
+        if i==0: continue #skip header row
+        tags.append(row[0])
+        sf = csv.reader(open('dcMats_PCAord/'+row[1]+'.csv','r',newline='\n'))
+        samp = np.array([r for r in sf])
+        samples.append(samp.flatten())
+    #print(len(samples),samples[0])
+        
+    #grab the TPM data for the lowP chord to be classified
+    sf = csv.reader(open('dcMats_PCAord_lowP/'+chd+'.csv','r',newline='\n'))
+    samp = np.array([r for r in sf])
+        
+    #predict tag for chd from trained knn classifier
+    clf = KNeighborsClassifier(**kwargs)
+    clf.fit(samples,tags)
+    return(chd,clf.predict(samp.flatten()))
+
+#knn_testClass(0,n_neighbors=1,p=1,metric='minkowski')   
+#csvTransposer('[0, 3, 5, 9] SDs prog probs 50ms.csv', '[0, 3, 5, 9] SDs prog probs 50msTRANS.csv')
+#getNaiveDists([4,5,9,11], 'C:/Users/Andrew/workspace/DissWork/Abs Syntax Forwards_rev/', 200, rt='t', reduc='PCA',comps=[])
 #subCluster(10, "563TPDmatrixSim kmed 200_n10.csv", '200 nDistMat AbsP Syntax Forwards_rev.csv')
-#agglomClus('200 nDistMat AbsP Syntax Forwards_PCA.csv',2)
+#agglomClus('200 nDistMat AbsP Syntax Forwards_PCA.csv',7)
 #getSilhouettes('200 nDistMat AbsP Syntax Forwards_PCA.csv','C:/Users/Andrew/workspace/DissWork/nAcrossK_PCA/',k='multi')        
 #metaCluster('C:/Users/Andrew/workspace/DissWork/nAcrossK_PCA/',10)
-#matrixSimCaller(10, 'C:/Users/Andrew/workspace/DissWork/Abs Syntax Forwards_rev/', 200, 10)
-#TPDmatrixSim('C:/Users/Andrew/workspace/DissWork/Abs Syntax Forwards_rev/',200,10,meth='naive',reduc='PCA')
+#TPDmatrixSim('C:/Users/Andrew/workspace/DissWork/Abs Syntax Forwards_rev/',200,10,meth='naive',reduc='PCA',sendData=True)
 #rareSDSFixer('C:/Users/Andrew/workspace/DissWork/Abs Syntax Backwards/')
 #TPDentropyCluster('C:/Users/Andrew/workspace/DissWork/Abs Syntax Forwards_rev/',5)
 #bigramTPDcluster('C:/Users/Andrew/workspace/DissWork/100 AbsP Syntax Forwards/',10)#memory hog!
