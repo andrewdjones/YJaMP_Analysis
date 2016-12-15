@@ -1,4 +1,7 @@
 import csv
+import numpy as np
+from sklearn import metrics
+from sklearn.cross_validation import train_test_split, cross_val_score
 
 """
 Classifier models for tagging low-probability chords
@@ -19,8 +22,6 @@ def knn_testClass(r_state,verbose=False,**kwargs):
     3. Test on remaining 30%
     Return accuracy score
     '''
-    import numpy as np
-    from sklearn.cross_validation import train_test_split
     from sklearn.neighbors import KNeighborsClassifier
     
     #grab the flat clustering for top200 chords
@@ -43,9 +44,12 @@ def knn_testClass(r_state,verbose=False,**kwargs):
     
     #fit knn model, return score
     clf = KNeighborsClassifier(**kwargs)
-    clf.fit(x_tr,y_tr)
+    scores = cross_val_score(clf, x_tr, y_tr, cv=5,scoring='accuracy')
     if verbose:
-        print(x_ts[0],clf.predict_proba(x_ts[0]))
+        #print(x_ts[0],clf.predict_proba(x_ts[0]))
+        print('Mean cross-val accuracy is %0.2f +/- %0.2f' % (scores.mean(),scores.std()*2))
+        clf.fit(x_tr,y_tr)
+        print('On testing data: ',clf.score(x_ts,y_ts))
     #score the trained model on the held-out testing data
     return(clf.score(x_ts,y_ts))
 
@@ -102,7 +106,6 @@ def TPD_PCA_lowP(mx):
         
 def knn_predicter(chd,**kwargs):
     '''Using knn trained on top200 SDS flat clustering tags, predicts cluster for lower-P chd'''
-    import numpy as np
     from sklearn.neighbors import KNeighborsClassifier
     
     #grab the flat clustering for top200 chords; this is the training set for the model
@@ -134,8 +137,6 @@ def knn_predicter(chd,**kwargs):
 def decision_class(r_state,verbose=False,forest=False,**kwargs):
     """A (predictably terrible) decision tree classifier for high-P chords
     if forest==True, employs random forest (default, 10 trees)"""
-    import numpy as np
-    from sklearn.cross_validation import train_test_split
     
     #grab the flat clustering for top200 chords
     #numChords by numWindows array of sample data
@@ -155,7 +156,7 @@ def decision_class(r_state,verbose=False,forest=False,**kwargs):
     x_tr,x_ts,y_tr,y_ts = train_test_split(samples,tags,test_size=0.3,random_state=r_state)
     #print(y_tr)
     
-    #fit knn model, return score
+    #fit model, return score
     if forest:
         from sklearn import ensemble
         clf = ensemble.RandomForestClassifier(**kwargs)
@@ -174,9 +175,8 @@ def decision_class(r_state,verbose=False,forest=False,**kwargs):
 ###########################
 
 def bayes(r_state,mod_type='Multinomial',**kwargs):
-    """for playing with various naive bayes classifiers"""
-    import numpy as np
-    from sklearn.cross_validation import train_test_split
+    """for playing with various naive bayes classifiers
+    NB: they're mostly not appropriate to this data representation"""
     import collections
     
     #grab the flat clustering for top200 chords
@@ -207,7 +207,7 @@ def bayes(r_state,mod_type='Multinomial',**kwargs):
     est_priors = [y/sum(est_priors) for y in est_priors]
     #print(est_priors)
     
-    #fit knn model, return score
+    #fit model, return score
     if mod_type=='Multinomial':
         from sklearn.naive_bayes import MultinomialNB
         clf = MultinomialNB(class_prior=est_priors,**kwargs)
@@ -223,8 +223,49 @@ def bayes(r_state,mod_type='Multinomial',**kwargs):
     #score the trained model on the held-out testing data
     return(clf.score(x_ts,y_ts))
 
-bayes(0,mod_type='Multinomial',alpha=0.01)
+###########################
+#IV. SVC stuff
+###########################
+
+def svc_score(r_state,verbose=True,**kwargs):
+    """
+    runs simple svc on test/train/split data
+    """
+    
+    #grab the flat clustering for top200 chords
+    #numChords by numWindows array of sample data
+    samples = []
+    #numChords-length vector of cluster tags
+    tags = []
+    flat_clus_path = 'C:/Users/Andrew/Documents/DissNOTCORRUPT/Categories chapter/truncDend_memb.csv'
+    all_labels = csv.reader(open(flat_clus_path,'r',newline='\n'))
+    for i,row in enumerate(all_labels):
+        if i==0: continue #skip header row
+        tags.append(row[0])
+        sf = np.genfromtxt('dcMats_PCAord/'+row[1]+'.csv',delimiter=',')
+        samples.append(sf.flatten())
+    #print(samples[0])
+    
+    #auto-separate training/testing sets from full tagged sample
+    x_tr,x_ts,y_tr,y_ts = train_test_split(samples,tags,test_size=0.2,random_state=r_state)
+    #print(y_tr)
+    
+    #fit model, return score
+    from sklearn import svm
+    clf = svm.SVC(**kwargs)
+    #clf.fit(x_tr,y_tr)
+    scores = cross_val_score(clf, x_tr, y_tr, cv=5,scoring='accuracy')
+    if verbose:
+        #print(x_ts[0],clf.predict_proba(x_ts[0]))
+        print('Mean cross-val accuracy is %0.2f +/- %0.2f' % (scores.mean(),scores.std()*2))
+        clf.fit(x_tr,y_tr)
+        print('On testing data: ',clf.score(x_ts,y_ts))
+    #score the trained model on the held-out testing data
+    #return(clf.score(x_ts,y_ts))
+    
+svc_score(np.random.randint(0,1000),decision_function_shape='ovr',kernel='linear',C=1)
+#bayes(0,mod_type='Multinomial',alpha=0.01)
 #decision_class(1,verbose=True,forest=True,min_samples_split = 5,n_estimators=100)
 #knn_testClass(0,n_neighbors=1,p=1,metric='minkowski') 
-#knn_scorer(20,p=2,metric='minkowski')
+#knn_scorer(20,p=1,metric='minkowski',weights='distance')
 #knn_predicter('[2, 4, 6, 9]',n_neighbors=5,p=2,metric='minkowski')
