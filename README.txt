@@ -4,7 +4,9 @@ This repository holds code written for the YJaMP corpus and documented in my for
 
 --------------
 
-The most dissertation-relevant code with the best maintenance is found in the following files, which roughly parallel the chapter structure of the dissertation:
+The most dissertation-relevant code with the best maintenance is found in the following files:
+
+yjampClass.py: various elementary ML classifiers, mostly run on PCA-reduced temporal probability matrices for chord clustering and tagging.
 
 jazzKey.py: code for extracting/testing key profiles and producing locally-transposed voicings and scale degree sets from the raw MIDI data.  Turns raw data into chord objects of various kinds.
 
